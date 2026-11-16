@@ -296,6 +296,7 @@ dependencies = [
  "anyhow",
  "clap",
  "ignore",
+ "memchr",
  "rayon",
  "regex",
  "termcolor",

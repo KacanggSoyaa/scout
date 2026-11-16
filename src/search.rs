@@ -2,7 +2,7 @@
 use rayon::prelude::*;
 use regex::{Regex, RegexBuilder};
 use std::fs::File;
-use std::io::{BufRead, BufReader, Read};
+use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 
 use crate::cli::Args;
@@ -37,26 +37,27 @@ impl Matcher {
         }
     }
 
-    fn find_match(&self, line: &str) -> Option<(usize, String)> {
+    #[inline]
+    fn find_match(&self, line: &str) -> Option<(usize, usize)> {
         if let Some(re) = &self.regex {
             let m = re.find(line)?;
-            let col = line[..m.start()].chars().count() + 1;
-            return Some((col, m.as_str().to_string()));
+            return Some((m.start(), m.end() - m.start()));
         }
         let needle = self.literal.as_ref()?;
         if needle.is_empty() {
-            return Some((1, String::new()));
+            return Some((0, 0));
         }
         let idx = line.find(needle)?;
-        let col = line[..idx].chars().count() + 1;
-        Some((col, needle.clone()))
+        Some((idx, needle.len()))
     }
 }
 
 pub fn search_files(files: Vec<PathBuf>, matcher: &Matcher, printer: &Printer) -> Result<bool> {
+    let need_details = printer.needs_details();
+    let files_only = printer.files_with_matches();
     let results: Vec<SearchResult> = files
         .par_iter()
-        .filter_map(|path| match search_file(path, matcher) {
+        .filter_map(|path| match search_file(path, matcher, need_details, files_only) {
             Ok(res) => res,
             Err(err) => {
                 eprintln!("scout: {}: {err}", path.display());
@@ -68,51 +69,90 @@ pub fn search_files(files: Vec<PathBuf>, matcher: &Matcher, printer: &Printer) -
     let mut results = results;
     results.sort_by(|a, b| a.path.cmp(&b.path));
 
+    let mut stdout = termcolor::StandardStream::stdout(printer.choice());
     let mut found = false;
     for res in &results {
-        if res.matches.is_empty() {
+        if res.count == 0 {
             continue;
         }
         found = true;
-        printer.print_result(res)?;
+        printer.print_result(res, &mut stdout)?;
     }
     Ok(found)
 }
 
-fn search_file(path: &Path, matcher: &Matcher) -> Result<Option<SearchResult>> {
-    let mut file = File::open(path).with_context(|| format!("failed to open {}", path.display()))?;
-
-    let mut probe = [0u8; 8192];
-    let n = file.read(&mut probe).unwrap_or(0);
-    if probe[..n].contains(&0) {
-        return Ok(None); // skip binary
-    }
-
-    // reopen to read from start
+fn search_file(
+    path: &Path,
+    matcher: &Matcher,
+    need_details: bool,
+    files_only: bool,
+) -> Result<Option<SearchResult>> {
     let file = File::open(path).with_context(|| format!("failed to open {}", path.display()))?;
-    let reader = BufReader::new(file);
-
+    let mut reader = BufReader::with_capacity(64 * 1024, file);
+    {
+        let probe = reader
+            .fill_buf()
+            .with_context(|| format!("failed to read {}", path.display()))?;
+        if memchr::memchr(0, probe).is_some() {
+            return Ok(None);
+        }
+    }
+    let mut line_buf = Vec::new();
     let mut matches = Vec::new();
-    for (idx, line_res) in reader.lines().enumerate() {
-        let line = match line_res {
-            Ok(l) => l,
-            Err(_) => return Ok(None), // likely binary/invalid utf-8; skip
+    let mut count = 0usize;
+    let mut line_no = 0usize;
+
+    loop {
+        line_buf.clear();
+        let n = reader
+            .read_until(b'\n', &mut line_buf)
+            .with_context(|| format!("failed to read {}", path.display()))?;
+        if n == 0 {
+            break;
+        }
+
+        line_no += 1;
+        if line_buf.ends_with(b"\n") {
+            line_buf.pop();
+            if line_buf.ends_with(b"\r") {
+                line_buf.pop();
+            }
+        } else if line_buf.ends_with(b"\r") {
+            line_buf.pop();
+        }
+
+        let line = match std::str::from_utf8(&line_buf) {
+            Ok(s) => s,
+            Err(_) => return Ok(None),
         };
-        if let Some((col, matched)) = matcher.find_match(&line) {
-            matches.push(Match {
-                line_no: idx + 1,
-                col,
-                text: line,
-                matched,
-            });
+
+        if let Some((byte_offset, matched_len)) = matcher.find_match(line) {
+            count += 1;
+            if need_details {
+                let col = line[..byte_offset].chars().count() + 1;
+                matches.push(Match {
+                    line_no,
+                    col,
+                    byte_offset,
+                    matched_len,
+                    text: line.to_string(),
+                });
+            } else if files_only {
+                return Ok(Some(SearchResult {
+                    path: path.to_path_buf(),
+                    count: 1,
+                    matches: Vec::new(),
+                }));
+            }
         }
     }
 
-    if matches.is_empty() {
+    if count == 0 {
         Ok(None)
     } else {
         Ok(Some(SearchResult {
             path: path.to_path_buf(),
+            count,
             matches,
         }))
     }

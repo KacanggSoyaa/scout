@@ -100,26 +100,31 @@ Pattern matching and per-file searching.
 - **`Matcher::new(args: &Args) -> Result<Self>`**: Builds the matcher.
   - Uses regex mode when `--regex` or `--ignore-case` is set (escaping literal pattern for case-insensitive literal search).
   - Otherwise stores the raw literal pattern.
-- **`Matcher::find_match(&self, line: &str) -> Option<(usize, String)>`**: Finds the first match in a line, returning 1-based column and matched text.
-- **`search_files(files: Vec<PathBuf>, matcher: &Matcher, printer: &Printer) -> Result<bool>`**: Searches files in parallel with Rayon, collects successful results, sorts by path, prints non-empty results, and returns whether any matches were found.
-- **`search_file(path: &Path, matcher: &Matcher) -> Result<Option<SearchResult>>`**: Searches a single file.
-  - Probes for NUL bytes to skip likely binary files.
-  - Reads lines and records matches with line/column/text.
+- **`Matcher::find_match(&self, line: &str) -> Option<(usize, usize)>`**: Finds the first match in a line, returning `(byte offset, matched byte length)` without allocating or computing the column.
+- **`search_files(files: Vec<PathBuf>, matcher: &Matcher, printer: &Printer) -> Result<bool>`**: Searches files in parallel with Rayon, collects successful results, sorts by path, reuses a single stdout stream, prints non-empty results, and returns whether any matches were found.
+  - `need_details` is false for `-l`/`-c` mode, so per-match line text is not stored.
+  - `files_only` (from `-l`) enables early exit as soon as a file matches.
+- **`search_file(path: &Path, matcher: &Matcher, need_details: bool, files_only: bool) -> Result<Option<SearchResult>>`**: Searches a single file.
+  - Opens the file once with a 64 KiB `BufReader` (no re-open).
+  - Probes the first buffered chunk with SIMD-accelerated `memchr` for NUL bytes to skip binary files.
+  - Reuses a line buffer; computes the 1-based column only when detailed output is needed.
   - Skips unreadable/non-text cases and returns `None` when no matches exist.
 
 ### `src/output.rs`
 Terminal output formatting and layout display.
 
-- **`Match` (struct)**: One match record (`line_no`, `col`, `text`, `matched`).
-- **`SearchResult` (struct)**: All matches for a file path.
+- **`Match` (struct)**: One match record (`line_no`, `col`, `byte_offset`, `matched_len`, `text`).
+- **`SearchResult` (struct)**: `path`, total `count`, and collected `matches` for a file.
 - **`Printer` (struct)**: Output mode settings derived from args (`files_with_matches`, `count`, `no_color`).
 - **`Printer::new(args: &Args) -> Self`**: Creates a printer from CLI args.
 - **`Printer::choice(&self) -> ColorChoice`**: Chooses colored vs plain output.
-- **`Printer::print_result(&self, res: &SearchResult) -> Result<()>`**: Prints results in one of three modes:
+- **`Printer::needs_details(&self) -> bool`**: True in detailed output mode (not `-l`/`-c`).
+- **`Printer::files_with_matches(&self) -> bool`**: True when only matching file paths should be printed.
+- **`Printer::print_result(&self, res: &SearchResult, stdout: &mut StandardStream) -> Result<()>`**: Prints results in one of three modes:
   - file paths only (`-l`)
   - `path:count` (`-c`)
-  - detailed `path:line:col:line_text` with highlighted match
-- **`Printer::set(&self, out: &mut StandardStream, color: Color, bold: bool) -> Result<()>`**: Applies terminal color/style.
+  - detailed `path:line:col:line_text` with highlighted match (uses stored byte offset/length instead of re-searching the line)
+- **`set_color(out: &mut StandardStream, color: Color, bold: bool) -> Result<()>`**: Applies terminal color/style.
 - **`print_layout(no_color: bool) -> Result<()>`**: Prints the terminal layout showing available functions, usage examples, and options.
 - **`section(out: &mut StandardStream, name: &str) -> Result<()>`**: Renders a layout section header.
 - **`item(out: &mut StandardStream, key: &str, desc: &str) -> Result<()>`**: Renders a labeled function/feature row in the layout.
