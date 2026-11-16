@@ -1,0 +1,13 @@
+﻿[package]
+name = "scout"
+version = "0.1.0"
+edition = "2021"
+description = "A fast concurrent CLI file searcher"
+
+[dependencies]
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+ignore = "0.4"
+rayon = "1"
+regex = "1"
+termcolor = "1"
