@@ -1,0 +1,38 @@
+[package]
+name = "scout-convert"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Image and document conversion CLI"
+
+[[bin]]
+name = "scout-convert"
+path = "src/main.rs"
+
+[features]
+default = ["office", "docx-export", "pdf-raster"]
+office = ["dep:office2pdf"]
+docx-export = ["dep:rdocx"]
+pdf-raster = ["dep:pdfium-render"]
+
+[dependencies]
+anyhow.workspace = true
+clap.workspace = true
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp", "bmp", "tiff", "gif"] }
+pdf-extract = "0.12"
+printpdf = { version = "0.12", default-features = false, features = ["images", "jpeg", "png", "webp", "bmp", "tiff", "gif"] }
+pulldown-cmark = { version = "0.13", default-features = false }
+rayon = "1"
+walkdir = "2"
+office2pdf = { version = "0.11", optional = true }
+rdocx = { version = "0.17", optional = true }
+pdfium-render = { version = "0.9", features = ["image_latest"], optional = true }
+
+[dev-dependencies]
+assert_cmd = "2"
+image = { version = "0.25", default-features = false, features = ["png"] }
+lopdf = "0.42"
+predicates = "3"
+tempfile = "3"
+zip = "9"

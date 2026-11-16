@@ -1,12 +1,19 @@
-﻿use anyhow::{Context, Result};
+use anyhow::{Context, Result};
 use rayon::prelude::*;
 use regex::{Regex, RegexBuilder};
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 
-use crate::cli::Args;
 use crate::output::{Match, Printer, SearchResult};
+
+/// Options used to build a [`Matcher`].
+#[derive(Debug, Clone, Default)]
+pub struct SearchOptions {
+    pub pattern: Option<String>,
+    pub regex: bool,
+    pub ignore_case: bool,
+}
 
 pub struct Matcher {
     regex: Option<Regex>,
@@ -14,16 +21,16 @@ pub struct Matcher {
 }
 
 impl Matcher {
-    pub fn new(args: &Args) -> Result<Self> {
-        let raw_pattern = args.pattern.clone().unwrap_or_default();
-        if args.regex || args.ignore_case {
-            let pattern = if args.regex {
+    pub fn new(opts: &SearchOptions) -> Result<Self> {
+        let raw_pattern = opts.pattern.clone().unwrap_or_default();
+        if opts.regex || opts.ignore_case {
+            let pattern = if opts.regex {
                 raw_pattern
             } else {
                 regex::escape(&raw_pattern)
             };
             let mut b = RegexBuilder::new(&pattern);
-            b.case_insensitive(args.ignore_case);
+            b.case_insensitive(opts.ignore_case);
             let regex = b.build().context("invalid pattern")?;
             Ok(Self {
                 regex: Some(regex),
@@ -57,13 +64,15 @@ pub fn search_files(files: Vec<PathBuf>, matcher: &Matcher, printer: &Printer) -
     let files_only = printer.files_with_matches();
     let results: Vec<SearchResult> = files
         .par_iter()
-        .filter_map(|path| match search_file(path, matcher, need_details, files_only) {
-            Ok(res) => res,
-            Err(err) => {
-                eprintln!("scout: {}: {err}", path.display());
-                None
-            }
-        })
+        .filter_map(
+            |path| match search_file(path, matcher, need_details, files_only) {
+                Ok(res) => res,
+                Err(err) => {
+                    eprintln!("scout: {}: {err}", path.display());
+                    None
+                }
+            },
+        )
         .collect();
 
     let mut results = results;
