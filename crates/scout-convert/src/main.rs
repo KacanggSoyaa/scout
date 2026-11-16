@@ -61,6 +61,7 @@ fn run(args: Args) -> Result<ExitCode> {
         dpi: args.dpi,
         quality: args.quality,
         overwrite: args.overwrite,
+        verbose: args.verbose,
     };
 
     let pool = build_pool(args.jobs)?;

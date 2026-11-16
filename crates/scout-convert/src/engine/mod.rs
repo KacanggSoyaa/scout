@@ -12,6 +12,7 @@ pub struct ConvertOptions {
     pub dpi: u32,
     pub quality: u8,
     pub overwrite: bool,
+    pub verbose: bool,
 }
 
 pub fn run(job: &Job, opts: &ConvertOptions) -> Result<()> {
@@ -28,10 +29,24 @@ pub fn run(job: &Job, opts: &ConvertOptions) -> Result<()> {
         Engine::Magick => external::magick(job, opts),
         Engine::Auto => match native::convert(job, opts) {
             Ok(()) => Ok(()),
-            Err(native_err) => match external::fallback(job, opts) {
-                Ok(()) => Ok(()),
-                Err(_) => Err(native_err),
-            },
+            Err(native_err) => {
+                if opts.verbose {
+                    eprintln!(
+                        "scout-convert: native conversion failed: {native_err:#}; trying external tools"
+                    );
+                }
+                match external::fallback(job, opts) {
+                    Ok(()) => Ok(()),
+                    Err(fallback_err) => {
+                        if opts.verbose {
+                            eprintln!(
+                                "scout-convert: external fallback unavailable: {fallback_err:#}"
+                            );
+                        }
+                        Err(native_err)
+                    }
+                }
+            }
         },
     }
 }

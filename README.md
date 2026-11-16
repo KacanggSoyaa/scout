@@ -69,6 +69,50 @@ scout -c "TODO" .
 
 ## scout-convert
 
+`scout-convert` converts images, text/Markdown, Office documents and PDFs. Most
+conversions run entirely in-process; LibreOffice, Pandoc and ImageMagick are
+used only as fallbacks when installed.
+
+### Quick start
+
+```powershell
+# 1. Build the workspace
+cargo build --release
+
+# 2. Optional: enable PDF -> PNG/JPG (downloads pdfium.dll once)
+./scripts/fetch-pdfium.ps1
+
+# 3. Convert. Output goes next to the input by default.
+.\target\release\scout-convert.exe photo.png        # -> photo.pdf
+.\target\release\scout-convert.exe notes.txt        # -> notes.pdf
+.\target\release\scout-convert.exe report.docx -t md -o report.md
+```
+
+During development, replace the executable with
+`cargo run -p scout-convert --`.
+
+### How outputs are chosen
+
+| Invocation | Result |
+| --- | --- |
+| `scout-convert a.png` | `a.pdf` in the same directory |
+| `scout-convert a.txt -o out/manual.pdf` | `out/manual.pdf` (directories are created) |
+| `scout-convert docs/ --out-dir out` | `out/<name>.pdf` for every supported file under `docs/` |
+| `scout-convert a.png b.png -o book.pdf` | one `book.pdf` with two pages |
+| `scout-convert a.png b.png --no-merge` | `a.pdf` and `b.pdf` |
+
+- Directories are searched recursively; unsupported files are skipped.
+- Existing outputs are never replaced unless you pass `--overwrite`.
+- When `--to` is omitted, the output extension decides the target. Images, text
+  and Office inputs default to PDF; PDF inputs need `--to` or an output name
+  such as `-o page.png`.
+- Merging happens automatically when several images are passed together with
+  `-o <file>.pdf`. `--merge` forces it (output defaults to `merged.pdf`);
+  `--no-merge` converts each image separately.
+- `--dry-run` prints the plan without writing anything.
+- `--out-dir` flattens directory trees, so two inputs with the same file stem
+  map to the same output path. Rename or convert them separately.
+
 ### Supported conversions
 
 | Input | Output | Engine |
@@ -80,43 +124,42 @@ scout -c "TODO" .
 | PDF | TXT | native (`pdf-extract`) |
 | PDF | PNG, JPG | native (`pdfium`, external DLL) |
 
-Multiple images passed with `-o out.pdf` are merged into one PDF. Use
-`--no-merge` to convert them individually instead.
-
 PDF to DOCX and OCR are not supported.
 
-### Examples
+### Common recipes
 
 ```bash
-# Image to PDF
+# Images -> PDF
 scout-convert photo.png
+scout-convert scan-1.jpg scan-2.jpg scan-3.jpg -o scans.pdf
 
-# Merge several images into one PDF
-scout-convert page1.png page2.png page3.png -o book.pdf
-
-# Text or Markdown to PDF
+# Text, CSV, JSON, Markdown -> PDF
 scout-convert notes.txt
+scout-convert data.csv --page-size letter
 scout-convert README.md -o README.pdf
 
-# Office documents to PDF
+# Office -> PDF
 scout-convert report.docx
 scout-convert budget.xlsx slides.pptx --out-dir out
 
-# PDF to text
+# PDF -> text
 scout-convert document.pdf -t txt
 
-# PDF to images (150 DPI by default)
+# PDF -> images (one file per page when a PDF has several pages)
 scout-convert document.pdf -t png --dpi 200
 scout-convert document.pdf -t jpg --quality 85 -o page.jpg
 
-# DOCX to HTML or Markdown
+# DOCX -> HTML or Markdown
 scout-convert report.docx -t html
 scout-convert report.docx -t md
 
 # Batch a directory, preview first
 scout-convert docs/ --out-dir converted --dry-run
-scout-convert docs/ --out-dir converted
+scout-convert docs/ --out-dir converted --jobs 4
 ```
+
+Multi-page PDFs rasterize to `page-1.png`, `page-2.png`, and so on when the
+output stem is `page.png`; with a single page the exact output name is used.
 
 ### Options
 
@@ -125,20 +168,19 @@ scout-convert docs/ --out-dir converted
 - `-o, --output <FILE>` output file for a single input (or merged PDF)
 - `--out-dir <DIR>` output directory, one file per input
 - `--merge` / `--no-merge` control merging multiple images into one PDF
-- `--page-size <a4|letter|legal|a3>` PDF page size (default `a4`)
+- `--page-size <a4|letter|legal|a3>` page size for image/text PDF output
+  (default `a4`; Office conversions keep their original layout)
 - `--dpi <N>` rasterization DPI for PDF to image (default `150`)
 - `--quality <N>` JPEG quality from 1 to 100 (default `90`)
 - `--engine <auto|native|libreoffice|pandoc|magick>` conversion engine
   (default `auto`)
-- `-j, --jobs <N>` number of parallel conversions
+- `-j, --jobs <N>` number of parallel conversions (`0` uses the Rayon default)
 - `--overwrite` overwrite existing outputs
 - `--dry-run` print planned conversions without writing files
 - `--list-formats` print the conversion matrix and exit
-- `-q, --quiet` suppress per-file progress output
-- `-v, --verbose` print extra information
-
-If `--to` is omitted, a known output extension is used; otherwise images, text
-and Office inputs default to PDF.
+- `-q, --quiet` suppress per-file success output
+- `-v, --verbose` print fallback diagnostics when `auto` tries external tools
+- `-h, --help` / `-V, --version` show help or version
 
 ### Engines
 
@@ -150,7 +192,8 @@ installed external tool when one can handle the conversion:
 - **ImageMagick** (`magick`) — image to image
 
 Pass `--engine native`, `--engine libreoffice`, `--engine pandoc` or
-`--engine magick` to force one path.
+`--engine magick` to force one path. If the requested tool is missing or the
+conversion pair is unsupported, the file fails with a message on stderr.
 
 ### PDF rasterization setup
 
@@ -176,6 +219,9 @@ When the library is unavailable, PDF rasterization and its tests are skipped.
 - `0` all conversions succeeded
 - `1` some conversions failed, others succeeded
 - `2` every conversion failed, or invalid arguments/inputs
+
+Errors for individual files are printed to stderr while the remaining files
+continue converting.
 
 ### Limitations
 
