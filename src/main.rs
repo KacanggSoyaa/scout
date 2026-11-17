@@ -7,6 +7,9 @@ mod output;
 mod search;
 mod walk;
 
+#[cfg(test)]
+mod test_support;
+
 use cli::Args;
 
 fn main() -> ExitCode {
@@ -34,6 +37,11 @@ fn run(args: Args) -> Result<bool> {
 
     let matcher = search::Matcher::new(&args)?;
     let printer = output::Printer::new(&args);
+
+    if args.path.as_os_str() == "-" {
+        return search::search_stdin(&matcher, &printer);
+    }
+
     let files = walk::collect_files(&args)?;
 
     if let Some(jobs) = args.jobs {

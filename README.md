@@ -24,6 +24,7 @@ scout -g "*.rs" "fn main" src
 scout -e "fn\s+\w+" .
 scout -l "TODO" .
 scout -c "TODO" .
+echo "TODO: fix me" | scout TODO -   # read from stdin
 
 # Run without installing
 cargo run -- "pattern" .
@@ -33,7 +34,7 @@ cargo run -- --layout
 ## Options
 
 - `pattern` optional search pattern (literal by default); omit to show the layout
-- `PATH` file or directory to search (default: `.`)
+- `PATH` file or directory to search (default: `.`); use `-` to read stdin
 - `-e, --regex` treat pattern as a regular expression
 - `-i, --ignore-case` case-insensitive matching
 - `-g, --glob <GLOB>` include files matching glob (repeatable)

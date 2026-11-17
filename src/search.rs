@@ -80,32 +80,47 @@ pub fn search_files(files: Vec<PathBuf>, matcher: &Matcher, printer: &Printer) -
 }
 
 fn search_file(path: &Path, matcher: &Matcher) -> Result<Option<SearchResult>> {
-    let mut file = File::open(path).with_context(|| format!("failed to open {}", path.display()))?;
+    let file = File::open(path).with_context(|| format!("failed to open {}", path.display()))?;
+    search_reader(path, file, matcher)
+}
 
-    let mut probe = [0u8; 8192];
-    let n = file.read(&mut probe).unwrap_or(0);
-    if probe[..n].contains(&0) {
+fn search_reader<R: Read>(
+    path: &Path,
+    reader: R,
+    matcher: &Matcher,
+) -> Result<Option<SearchResult>> {
+    let mut reader = BufReader::new(reader);
+    if reader.fill_buf()?.contains(&0) {
         return Ok(None); // skip binary
     }
 
-    // reopen to read from start
-    let file = File::open(path).with_context(|| format!("failed to open {}", path.display()))?;
-    let reader = BufReader::new(file);
-
     let mut matches = Vec::new();
-    for (idx, line_res) in reader.lines().enumerate() {
-        let line = match line_res {
-            Ok(l) => l,
-            Err(_) => return Ok(None), // likely binary/invalid utf-8; skip
-        };
+    let mut buf = Vec::new();
+    let mut line_no = 0usize;
+    loop {
+        buf.clear();
+        let n = reader
+            .read_until(b'\n', &mut buf)
+            .with_context(|| format!("failed to read {}", path.display()))?;
+        if n == 0 {
+            break;
+        }
+        if buf.last() == Some(&b'\n') {
+            buf.pop();
+            if buf.last() == Some(&b'\r') {
+                buf.pop();
+            }
+        }
+        let line = String::from_utf8_lossy(&buf);
         if let Some((col, matched)) = matcher.find_match(&line) {
             matches.push(Match {
-                line_no: idx + 1,
+                line_no: line_no + 1,
                 col,
-                text: line,
+                text: line.into_owned(),
                 matched,
             });
         }
+        line_no += 1;
     }
 
     if matches.is_empty() {
@@ -115,5 +130,77 @@ fn search_file(path: &Path, matcher: &Matcher) -> Result<Option<SearchResult>> {
             path: path.to_path_buf(),
             matches,
         }))
+    }
+}
+
+/// Search data piped to stdin when `PATH` is `-`.
+pub fn search_stdin(matcher: &Matcher, printer: &Printer) -> Result<bool> {
+    let stdin = std::io::stdin();
+    let result = search_reader(Path::new("<stdin>"), stdin.lock(), matcher)?;
+    match result {
+        Some(result) => {
+            printer.print_result(&result)?;
+            Ok(true)
+        }
+        None => Ok(false),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::cli::Args;
+    use crate::test_support::TempDir;
+    use clap::Parser;
+    use std::io::Cursor;
+
+    fn args(pattern: &str) -> Args {
+        Args::try_parse_from(["scout", pattern]).unwrap()
+    }
+
+    #[test]
+    fn literal_match_reports_char_column() {
+        let matcher = Matcher::new(&args("TODO")).unwrap();
+        assert_eq!(matcher.find_match("héllo TODO"), Some((7, "TODO".into())));
+    }
+
+    #[test]
+    fn regex_ignore_case_keeps_matched_text() {
+        let args = Args::try_parse_from(["scout", "-i", "-e", "todo"]).unwrap();
+        let matcher = Matcher::new(&args).unwrap();
+        assert_eq!(matcher.find_match("x ToDo y"), Some((3, "ToDo".into())));
+    }
+
+    #[test]
+    fn invalid_utf8_does_not_drop_the_file() {
+        let dir = TempDir::new();
+        let path = dir.write("mixed.txt", b"first\nna\xffme TODO here\nlast\n");
+        let result = search_file(&path, &Matcher::new(&args("TODO")).unwrap())
+            .unwrap()
+            .unwrap();
+        assert_eq!(result.matches.len(), 1);
+        assert_eq!(result.matches[0].line_no, 2);
+        assert!(result.matches[0].text.contains("TODO"));
+    }
+
+    #[test]
+    fn skips_files_with_nul_bytes() {
+        let dir = TempDir::new();
+        let path = dir.write("bin.dat", b"TODO\x00more");
+        assert!(
+            search_file(&path, &Matcher::new(&args("TODO")).unwrap())
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn reader_path_is_used_for_stdin_results() {
+        let matcher = Matcher::new(&args("TODO")).unwrap();
+        let result = search_reader(Path::new("<stdin>"), Cursor::new(b"a\nTODO\n"), &matcher)
+            .unwrap()
+            .unwrap();
+        assert_eq!(result.path, Path::new("<stdin>"));
+        assert_eq!(result.matches[0].line_no, 2);
     }
 }
