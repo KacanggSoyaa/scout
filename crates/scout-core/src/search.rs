@@ -4,6 +4,7 @@ use regex::{Regex, RegexBuilder};
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
+use termcolor::StandardStream;
 
 use crate::output::{Match, Printer, SearchResult};
 
@@ -97,7 +98,23 @@ fn search_file(
     files_only: bool,
 ) -> Result<Option<SearchResult>> {
     let file = File::open(path).with_context(|| format!("failed to open {}", path.display()))?;
-    let mut reader = BufReader::with_capacity(64 * 1024, file);
+    search_reader(
+        path,
+        BufReader::with_capacity(64 * 1024, file),
+        matcher,
+        need_details,
+        files_only,
+    )
+}
+
+fn search_reader<R: BufRead>(
+    path: &Path,
+    reader: R,
+    matcher: &Matcher,
+    need_details: bool,
+    files_only: bool,
+) -> Result<Option<SearchResult>> {
+    let mut reader = reader;
     {
         let probe = reader
             .fill_buf()
@@ -130,12 +147,9 @@ fn search_file(
             line_buf.pop();
         }
 
-        let line = match std::str::from_utf8(&line_buf) {
-            Ok(s) => s,
-            Err(_) => return Ok(None),
-        };
+        let line = String::from_utf8_lossy(&line_buf);
 
-        if let Some((byte_offset, matched_len)) = matcher.find_match(line) {
+        if let Some((byte_offset, matched_len)) = matcher.find_match(&line) {
             count += 1;
             if need_details {
                 let col = line[..byte_offset].chars().count() + 1;
@@ -144,7 +158,7 @@ fn search_file(
                     col,
                     byte_offset,
                     matched_len,
-                    text: line.to_string(),
+                    text: line.into_owned(),
                 });
             } else if files_only {
                 return Ok(Some(SearchResult {
@@ -164,5 +178,55 @@ fn search_file(
             count,
             matches,
         }))
+    }
+}
+
+/// Search data piped to stdin when `PATH` is `-`.
+pub fn search_stdin(matcher: &Matcher, printer: &Printer) -> Result<bool> {
+    let stdin = std::io::stdin();
+    let result = search_reader(
+        Path::new("<stdin>"),
+        BufReader::new(stdin.lock()),
+        matcher,
+        printer.needs_details(),
+        printer.files_with_matches(),
+    )?;
+    match result {
+        Some(result) => {
+            let mut stdout = StandardStream::stdout(printer.choice());
+            printer.print_result(&result, &mut stdout)?;
+            Ok(true)
+        }
+        None => Ok(false),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Cursor;
+
+    fn matcher(pattern: &str) -> Matcher {
+        Matcher::new(&SearchOptions {
+            pattern: Some(pattern.into()),
+            ..Default::default()
+        })
+        .unwrap()
+    }
+
+    #[test]
+    fn search_reader_uses_given_path_and_keeps_invalid_utf8_lines() {
+        let result = search_reader(
+            Path::new("<stdin>"),
+            BufReader::new(Cursor::new(b"first\nna\xffme TODO here\n")),
+            &matcher("TODO"),
+            true,
+            false,
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(result.path, Path::new("<stdin>"));
+        assert_eq!(result.count, 1);
+        assert_eq!(result.matches[0].line_no, 2);
     }
 }

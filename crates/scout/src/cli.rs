@@ -15,7 +15,7 @@ pub struct Args {
     /// Pattern to search for (literal by default). Omit to show the terminal layout.
     pub pattern: Option<String>,
 
-    /// File or directory to search
+    /// File or directory to search; use - to read stdin
     #[arg(value_name = "PATH", default_value = ".")]
     pub path: PathBuf,
 

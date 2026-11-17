@@ -7,7 +7,8 @@ mod layout;
 
 use cli::Args;
 use scout_core::{
-    collect_files, search_files, Matcher, PrintOptions, Printer, SearchOptions, WalkOptions,
+    collect_files, search_files, search_stdin, Matcher, PrintOptions, Printer, SearchOptions,
+    WalkOptions,
 };
 
 fn main() -> ExitCode {
@@ -43,6 +44,11 @@ fn run(args: Args) -> Result<bool> {
         count: args.count,
         no_color: args.no_color,
     });
+
+    if args.path.as_os_str() == "-" {
+        return search_stdin(&matcher, &printer);
+    }
+
     let files = collect_files(&WalkOptions {
         path: args.path.clone(),
         globs: args.globs.clone(),
