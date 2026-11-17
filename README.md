@@ -74,6 +74,17 @@ echo "TODO: fix me" | scout TODO -   # read from stdin
 conversions run entirely in-process; LibreOffice, Pandoc and ImageMagick are
 used only as fallbacks when installed.
 
+### Install for everyday use
+
+```powershell
+cargo install --path crates/scout-convert
+```
+
+This puts `scout-convert.exe` in `~/.cargo/bin` (already on PATH), so you can run
+the examples below from any directory. Re-run with `--force` after changing the
+source. Without installing, run them from the repo root as
+`cargo run -p scout-convert -- ...` instead.
+
 ### Quick start
 
 ```powershell
@@ -88,9 +99,6 @@ cargo build --release
 .\target\release\scout-convert.exe notes.txt        # -> notes.pdf
 .\target\release\scout-convert.exe report.docx -t md -o report.md
 ```
-
-During development, replace the executable with
-`cargo run -p scout-convert --`.
 
 ### How outputs are chosen
 
