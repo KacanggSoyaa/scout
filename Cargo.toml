@@ -1,13 +1,22 @@
-﻿[package]
-name = "scout"
+﻿[workspace]
+resolver = "2"
+members = ["crates/scout-core", "crates/scout", "crates/scout-convert"]
+default-members = ["crates/scout", "crates/scout-convert"]
+
+[workspace.package]
 version = "0.1.0"
 edition = "2021"
-description = "A fast concurrent CLI file searcher"
+license = "MIT OR Apache-2.0"
+rust-version = "1.93"
 
-[dependencies]
+[workspace.dependencies]
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }
-ignore = "0.4"
-rayon = "1"
-regex = "1"
 termcolor = "1"
+scout-core = { path = "crates/scout-core" }
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+strip = true
